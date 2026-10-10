@@ -76,6 +76,14 @@ function readExhibits() {
     }
 }
 
+function readConnections() {
+    try {
+        return JSON.parse(localStorage.getItem("ordinary-things-connections") || "[]");
+    } catch {
+        return [];
+    }
+}
+
 function formatDate(date) {
     return new Date(`${date}T12:00:00`).toLocaleDateString("en", {
         month: "short",
@@ -86,19 +94,25 @@ function formatDate(date) {
 
 function App() {
     const [exhibits, setExhibits] = useState(readExhibits);
+    const [connections, setConnections] = useState(readConnections);
     const [activeCategory, setActiveCategory] = useState("Everything");
     const [search, setSearch] = useState("");
-    const [showSaved, setShowSaved] = useState(false);
+    const [activeView, setActiveView] = useState("collection");
     const [isAdding, setIsAdding] = useState(false);
     const [selectedExhibit, setSelectedExhibit] = useState(null);
+    const [connectionPair, setConnectionPair] = useState(null);
 
     useEffect(() => {
         localStorage.setItem("ordinary-things-exhibits", JSON.stringify(exhibits));
     }, [exhibits]);
 
+    useEffect(() => {
+        localStorage.setItem("ordinary-things-connections", JSON.stringify(connections));
+    }, [connections]);
+
     const visibleExhibits = exhibits.filter((exhibit) => {
         const matchesCategory = activeCategory === "Everything" || exhibit.category === activeCategory;
-        const matchesSaved = !showSaved || exhibit.favorite;
+        const matchesSaved = activeView !== "favorites" || exhibit.favorite;
         const query = search.trim().toLowerCase();
         const matchesSearch = !query || [exhibit.title, exhibit.story, exhibit.place, exhibit.category]
             .some((value) => value.toLowerCase().includes(query));
@@ -127,7 +141,7 @@ function App() {
         };
         setExhibits((current) => [exhibit, ...current]);
         setActiveCategory("Everything");
-        setShowSaved(false);
+        setActiveView("collection");
         setSearch("");
         setIsAdding(false);
     }
@@ -137,6 +151,51 @@ function App() {
             setSelectedExhibit(visibleExhibits[Math.floor(Math.random() * visibleExhibits.length)]);
         }
     }
+
+    function drawConnectionPair() {
+        if (exhibits.length < 2) return;
+
+        const existingPairs = new Set(connections.map((connection) => [...connection.exhibitIds].sort().join(":")));
+        const unusedPairs = [];
+        for (let first = 0; first < exhibits.length; first += 1) {
+            for (let second = first + 1; second < exhibits.length; second += 1) {
+                const pair = [exhibits[first], exhibits[second]];
+                if (!existingPairs.has(pair.map((exhibit) => exhibit.id).sort().join(":"))) {
+                    unusedPairs.push(pair);
+                }
+            }
+        }
+
+        const availablePairs = unusedPairs.length ? unusedPairs : exhibits.flatMap((first, index) =>
+            exhibits.slice(index + 1).map((second) => [first, second])
+        );
+        const pair = availablePairs[Math.floor(Math.random() * availablePairs.length)];
+        setConnectionPair(pair.map((exhibit) => exhibit.id));
+    }
+
+    function saveConnection(event) {
+        event.preventDefault();
+        const reflection = new FormData(event.currentTarget).get("reflection").trim();
+        if (!connectionPair || !reflection) return;
+
+        setConnections((current) => [{
+            id: crypto.randomUUID(),
+            exhibitIds: connectionPair,
+            reflection,
+            createdAt: today,
+        }, ...current]);
+        setConnectionPair(null);
+    }
+
+    function openView(view) {
+        setActiveView(view);
+        if (view === "connections" && exhibits.length > 1 && !connectionPair) {
+            drawConnectionPair();
+        }
+    }
+
+    const drawnExhibits = connectionPair?.map((id) => exhibits.find((exhibit) => exhibit.id === id)).filter(Boolean) || [];
+    const savedConnections = connections.filter((connection) => connection.exhibitIds.every((id) => exhibits.some((exhibit) => exhibit.id === id)));
 
     return (
         <div className="museum-shell">
@@ -148,15 +207,20 @@ function App() {
 
                 <div className="sidebar-section-label">YOUR MUSEUM</div>
                 <nav className="side-nav" aria-label="Museum views">
-                    <button className={!showSaved ? "side-link active" : "side-link"} onClick={() => setShowSaved(false)}>
+                    <button className={activeView === "collection" ? "side-link active" : "side-link"} onClick={() => openView("collection")}>
                         <span className="side-icon collection-icon" aria-hidden="true">▦</span>
                         <span>Collection</span>
                         <span className="side-count">{exhibits.length}</span>
                     </button>
-                    <button className={showSaved ? "side-link active" : "side-link"} onClick={() => setShowSaved(true)}>
+                    <button className={activeView === "favorites" ? "side-link active" : "side-link"} onClick={() => openView("favorites")}>
                         <span className="side-icon" aria-hidden="true">♡</span>
                         <span>Favorites</span>
                         <span className="side-count">{exhibits.filter((exhibit) => exhibit.favorite).length}</span>
+                    </button>
+                    <button className={activeView === "connections" ? "side-link active" : "side-link"} onClick={() => openView("connections")}>
+                        <span className="side-icon" aria-hidden="true">⌁</span>
+                        <span>Connections</span>
+                        <span className="side-count">{connections.length}</span>
                     </button>
                 </nav>
 
@@ -172,7 +236,7 @@ function App() {
 
             <main className="main-content" id="collection">
                 <header className="topbar">
-                    <div className="breadcrumb"><span>YOUR MUSEUM</span><span className="breadcrumb-slash">/</span><strong>{showSaved ? "FAVORITES" : "THE COLLECTION"}</strong></div>
+                    <div className="breadcrumb"><span>YOUR MUSEUM</span><span className="breadcrumb-slash">/</span><strong>{activeView === "favorites" ? "FAVORITES" : activeView === "connections" ? "THE CONNECTION ROOM" : "THE COLLECTION"}</strong></div>
                     <button className="add-button" onClick={() => setIsAdding(true)}><span aria-hidden="true">+</span> Add an exhibit</button>
                 </header>
 
@@ -189,10 +253,76 @@ function App() {
                     </div>
                 </section>
 
+                {activeView === "connections" ? (
+                    <section className="connections-section" aria-label="Room of Strange Connections">
+                        <div className="connections-heading">
+                            <p className="eyebrow"><span className="eyebrow-line" /> THE ROOM OF STRANGE CONNECTIONS</p>
+                            <h2>Two things. One thread<span className="title-period">.</span></h2>
+                            <p className="connections-intro">The museum has put two things side by side. You decide what brings them together.</p>
+                        </div>
+
+                        {drawnExhibits.length === 2 ? (
+                            <div className="connection-draw">
+                                <div className="connection-pair">
+                                    {drawnExhibits.map((exhibit, index) => (
+                                        <article className="pair-exhibit" key={exhibit.id}>
+                                            <div className={`pair-image pair-image-${index}`}>
+                                                {exhibit.image ? <img src={exhibit.image} alt="" /> : <span aria-hidden="true">✳</span>}
+                                            </div>
+                                            <div className="exhibit-meta"><span>{exhibit.category}</span><span className="meta-dot">·</span><span>{exhibit.place}</span></div>
+                                            <h3>{exhibit.title}</h3>
+                                        </article>
+                                    ))}
+                                    <span className="pair-connector" aria-hidden="true">✳</span>
+                                </div>
+                                <form className="reflection-form" onSubmit={saveConnection}>
+                                    <label htmlFor="connection-reflection">What could these two have in common?</label>
+                                    <textarea id="connection-reflection" name="reflection" required maxLength="300" rows="2" placeholder="Maybe they both remind me to slow down..." />
+                                    <div className="reflection-actions">
+                                        <button className="draw-again-button" type="button" onClick={drawConnectionPair}>Draw another pair <span aria-hidden="true">↻</span></button>
+                                        <button className="submit-button" type="submit">Keep this thread <span aria-hidden="true">↗</span></button>
+                                    </div>
+                                </form>
+                            </div>
+                        ) : (
+                            <div className="connection-empty">
+                                <span aria-hidden="true">✳</span>
+                                <h3>Every thread starts with two things.</h3>
+                                <p>Add at least two exhibits to let the museum make a surprising pairing.</p>
+                                <button className="add-button" onClick={() => setIsAdding(true)}><span aria-hidden="true">+</span> Add an exhibit</button>
+                            </div>
+                        )}
+
+                        <div className="saved-threads">
+                            <div className="saved-threads-heading">
+                                <div><h3>Threads you found</h3><p>{savedConnections.length} saved {savedConnections.length === 1 ? "connection" : "connections"}</p></div>
+                            </div>
+                            {savedConnections.length ? (
+                                <div className="thread-list">
+                                    {savedConnections.map((connection) => {
+                                        const pair = connection.exhibitIds.map((id) => exhibits.find((exhibit) => exhibit.id === id));
+                                        return (
+                                            <article className="thread-entry" key={connection.id}>
+                                                <div className="thread-artifacts">
+                                                    {pair.map((exhibit) => <button key={exhibit.id} onClick={() => setSelectedExhibit(exhibit)}>{exhibit.title}</button>)}
+                                                </div>
+                                                <span className="thread-symbol" aria-hidden="true">↔</span>
+                                                <p>{connection.reflection}</p>
+                                                <span className="thread-date">{formatDate(connection.createdAt)}</span>
+                                            </article>
+                                        );
+                                    })}
+                                </div>
+                            ) : (
+                                <p className="no-threads">No threads yet. The first one might surprise you.</p>
+                            )}
+                        </div>
+                    </section>
+                ) : (
                 <section className="collection-section" aria-label="Exhibit collection">
                     <div className="section-heading">
                         <div>
-                            <h2>{showSaved ? "Your favorites" : "The collection"}</h2>
+                            <h2>{activeView === "favorites" ? "Your favorites" : "The collection"}</h2>
                             <p>{visibleExhibits.length === 1 ? "1 exhibit" : `${visibleExhibits.length} exhibits`} <span className="heading-dot">·</span> each one a little world</p>
                         </div>
                         <button className="surprise-button" onClick={openSurprise} disabled={!visibleExhibits.length}>
@@ -245,6 +375,7 @@ function App() {
                         </div>
                     )}
                 </section>
+                )}
 
                 <footer className="page-footer"><span>TAKE YOUR TIME IN HERE.</span><span>MADE OF LITTLE THINGS <span className="footer-heart">♥</span></span></footer>
             </main>
@@ -284,6 +415,22 @@ function App() {
                             <p className="detail-place">{selectedExhibit.place}</p>
                             <p className="detail-story">{selectedExhibit.story}</p>
                             <button className="detail-favorite" onClick={() => toggleFavorite(selectedExhibit.id)}>{selectedExhibit.favorite ? "♥ Saved to favorites" : "♡ Save to favorites"}</button>
+                            {connections.some((connection) => connection.exhibitIds.includes(selectedExhibit.id)) && (
+                                <div className="detail-threads">
+                                    <p>THREADS IN THIS EXHIBIT</p>
+                                    {connections.filter((connection) => connection.exhibitIds.includes(selectedExhibit.id)).map((connection) => {
+                                        const otherId = connection.exhibitIds.find((id) => id !== selectedExhibit.id);
+                                        const otherExhibit = exhibits.find((exhibit) => exhibit.id === otherId);
+                                        if (!otherExhibit) return null;
+                                        return (
+                                            <button key={connection.id} onClick={() => setSelectedExhibit(otherExhibit)}>
+                                                <span>↔ {otherExhibit.title}</span>
+                                                <span>{connection.reflection}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
                         </div>
                     </section>
                 </div>
